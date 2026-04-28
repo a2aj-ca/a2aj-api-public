@@ -1,0 +1,13 @@
+.env
+.venv
+__pycache__/
+
+.claude/
+.claude.json
+CLAUDE.local.md
+claude_instructions.md
+
+
+cache/
+logs/
+

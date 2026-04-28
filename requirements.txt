@@ -1,0 +1,11 @@
+fastapi==0.115.12
+fastapi-mcp==0.4.0
+uvicorn[standard]==0.34.2
+pymongo==4.12.1
+elasticsearch==8.18.0
+python-dotenv==1.1.0
+requests==2.32.3
+httpx==0.28.1
+pydantic==2.11.3
+fastmcp==2.5.1
+datasets==4.8.5
