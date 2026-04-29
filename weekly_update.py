@@ -4,9 +4,8 @@ Weekly Update Script
 ====================
 Pulls Canadian legal data from HuggingFace datasets and GitHub config files,
 loads into MongoDB and Elasticsearch with atomic swap to minimize downtime.
-
 Run via cron on Sundays:
-  0 15 * * 0  cd /home/sr/a2aj-api-public && .venv/bin/python weekly_update.py
+  0 15 * * 0  cd /home/ubuntu/a2aj-api-public && .venv/bin/python weekly_update.py
 """
 import os
 import sys
@@ -49,18 +48,17 @@ LOG_DIR = Path("logs")
 
 # ES settings
 MAX_ANALYZED_OFFSET = 10_000_000
-ES_CHUNK_SIZE = 500
+ES_CHUNK_SIZE = 1000
 ES_REQUEST_TIMEOUT = 300
 
 # GridFS threshold for large law fields (5 MB)
 GRIDFS_THRESHOLD = 5_000_000
 
 # Mongo batch size for inserts
-MONGO_BATCH_SIZE = 500
+MONGO_BATCH_SIZE = 1000
 
 # ────────── Logging ───────────────────────────────────────────────────────── #
 LOG_DIR.mkdir(exist_ok=True)
-
 logging.basicConfig(
     level=logging.INFO,
     format=">>> %(levelname)s | %(asctime)s | %(message)s",
@@ -72,8 +70,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ────────── Helpers ───────────────────────────────────────────────────────── #
-
-
 def _clean_value(v: Any) -> Any:
     """Convert HF dataset values to MongoDB-ready native Python types."""
     if v is None:
@@ -87,7 +83,6 @@ def _clean_value(v: Any) -> Any:
         return v
     return v
 
-
 def _row_to_doc(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a HF dataset row to a MongoDB-ready document, stripping nulls/empties."""
     doc = {}
@@ -96,7 +91,6 @@ def _row_to_doc(row: Dict[str, Any]) -> Dict[str, Any]:
         if cleaned is not None and cleaned != "":
             doc[k] = cleaned
     return doc
-
 
 def _doc_to_es(doc: Dict[str, Any], exclude_fields: Optional[set] = None) -> Dict[str, Any]:
     """Convert a mongo-ready doc to an ES-ready source dict."""
@@ -113,10 +107,7 @@ def _doc_to_es(doc: Dict[str, Any], exclude_fields: Optional[set] = None) -> Dic
             es_doc[k] = v
     return es_doc
 
-
 # ────────── GitHub Cache Refresh ─────────────────────────────────────────── #
-
-
 def refresh_github_caches() -> bool:
     """Fetch GitHub JSON files and write to cache/. Returns True on success."""
     CACHE_DIR.mkdir(exist_ok=True)
@@ -135,38 +126,29 @@ def refresh_github_caches() -> bool:
             all_ok = False
     return all_ok
 
-
 # ────────── MongoDB Import ────────────────────────────────────────────────── #
-
-
 def import_cases_to_mongo(db, collection_name: str) -> int:
     """Stream HF case-law dataset into a MongoDB collection. Returns doc count."""
     collection = db[collection_name]
     total = 0
-
     logger.info("Loading HF dataset %s (streaming)", HF_CASES_REPO)
     ds = load_dataset(HF_CASES_REPO, split="train", streaming=True, token=HF_TOKEN)
-
     batch_docs = []
     for row in ds:
         doc = _row_to_doc(row)
         if doc:
             batch_docs.append(doc)
-
         if len(batch_docs) >= MONGO_BATCH_SIZE:
             collection.insert_many(batch_docs)
             total += len(batch_docs)
             batch_docs = []
             if total % 10000 == 0:
                 logger.info("Cases mongo: %d docs inserted", total)
-
     if batch_docs:
         collection.insert_many(batch_docs)
         total += len(batch_docs)
-
     logger.info("Cases mongo import complete: %d documents", total)
     return total
-
 
 def import_laws_to_mongo(db, collection_name: str) -> int:
     """Stream HF laws dataset into a MongoDB collection with GridFS for large fields.
@@ -174,21 +156,17 @@ def import_laws_to_mongo(db, collection_name: str) -> int:
     collection = db[collection_name]
     fs = GridFS(db)
     total = 0
-
     gridfs_fields = (
         "unofficial_text_en", "unofficial_text_fr",
         "unofficial_sections_en", "unofficial_sections_fr",
     )
-
     logger.info("Loading HF dataset %s (streaming)", HF_LAWS_REPO)
     ds = load_dataset(HF_LAWS_REPO, split="train", streaming=True, token=HF_TOKEN)
-
     batch_docs = []
     for row in ds:
         doc = _row_to_doc(row)
         if not doc:
             continue
-
         # Parse unofficial_sections from JSON string to dict
         for sec_field in ("unofficial_sections_en", "unofficial_sections_fr"):
             if sec_field in doc and isinstance(doc[sec_field], str):
@@ -196,14 +174,12 @@ def import_laws_to_mongo(db, collection_name: str) -> int:
                     doc[sec_field] = json.loads(doc[sec_field])
                 except (json.JSONDecodeError, TypeError):
                     pass
-
         # Compute num_sections if sections exist
         for lang in ("en", "fr"):
             sec_field = f"unofficial_sections_{lang}"
             num_field = f"num_sections_{lang}"
             if sec_field in doc and isinstance(doc[sec_field], dict):
                 doc[num_field] = len(doc[sec_field])
-
         # Move large fields to GridFS
         for field in gridfs_fields:
             if field not in doc:
@@ -215,28 +191,22 @@ def import_laws_to_mongo(db, collection_name: str) -> int:
                 data = value.encode("utf-8")
             else:
                 continue
-
             if len(data) > GRIDFS_THRESHOLD:
                 file_id = fs.put(data)
                 doc[f"{field}_file_id"] = file_id
                 del doc[field]
-
         batch_docs.append(doc)
-
         if len(batch_docs) >= MONGO_BATCH_SIZE:
             collection.insert_many(batch_docs)
             total += len(batch_docs)
             batch_docs = []
             if total % 5000 == 0:
                 logger.info("Laws mongo: %d docs inserted", total)
-
     if batch_docs:
         collection.insert_many(batch_docs)
         total += len(batch_docs)
-
     logger.info("Laws mongo import complete: %d documents", total)
     return total
-
 
 def create_mongo_indexes(db, collection_name: str):
     """Create standard indexes on a collection."""
@@ -253,10 +223,7 @@ def create_mongo_indexes(db, collection_name: str):
     ])
     logger.info("Created indexes on %s", collection_name)
 
-
 # ────────── Elasticsearch Import ──────────────────────────────────────────── #
-
-
 def create_es_index(es: Elasticsearch, index_name: str):
     """Create an ES index with bulk-friendly settings.
     refresh_interval=-1 and number_of_replicas=0 speed up ingest;
@@ -279,12 +246,10 @@ def create_es_index(es: Elasticsearch, index_name: str):
     )
     logger.info("Created ES index %s", index_name)
 
-
 def import_cases_to_es(es: Elasticsearch, index_name: str) -> int:
     """Stream HF case-law dataset into an ES index. Returns doc count."""
     logger.info("Loading HF dataset %s for ES (streaming)", HF_CASES_REPO)
     ds = load_dataset(HF_CASES_REPO, split="train", streaming=True, token=HF_TOKEN)
-
     def generate_actions():
         for row in ds:
             doc = _row_to_doc(row)
@@ -292,7 +257,6 @@ def import_cases_to_es(es: Elasticsearch, index_name: str) -> int:
                 continue
             es_doc = _doc_to_es(doc)
             yield {"_index": index_name, "_source": es_doc}
-
     es_with_timeout = es.options(request_timeout=ES_REQUEST_TIMEOUT)
     success_count = 0
     fail_count = 0
@@ -311,24 +275,19 @@ def import_cases_to_es(es: Elasticsearch, index_name: str) -> int:
                 logger.warning("Failed to index doc: %s", item)
         if success_count % 10000 == 0 and success_count > 0:
             logger.info("Cases ES: %d docs indexed", success_count)
-
     logger.info("Cases ES import complete: %d succeeded, %d failed", success_count, fail_count)
     return success_count
-
 
 def import_laws_to_es(es: Elasticsearch, index_name: str) -> int:
     """Stream HF laws dataset into an ES index. Returns doc count."""
     exclude = {"unofficial_sections_en", "unofficial_sections_fr"}
-
     logger.info("Loading HF dataset %s for ES (streaming)", HF_LAWS_REPO)
     ds = load_dataset(HF_LAWS_REPO, split="train", streaming=True, token=HF_TOKEN)
-
     def generate_actions():
         for row in ds:
             doc = _row_to_doc(row)
             if not doc:
                 continue
-
             # Compute num_sections for ES scoring
             for lang in ("en", "fr"):
                 sec_field = f"unofficial_sections_{lang}"
@@ -339,10 +298,8 @@ def import_laws_to_es(es: Elasticsearch, index_name: str) -> int:
                         doc[num_field] = len(sections)
                     except (json.JSONDecodeError, TypeError):
                         pass
-
             es_doc = _doc_to_es(doc, exclude_fields=exclude)
             yield {"_index": index_name, "_source": es_doc}
-
     es_with_timeout = es.options(request_timeout=ES_REQUEST_TIMEOUT)
     success_count = 0
     fail_count = 0
@@ -359,15 +316,13 @@ def import_laws_to_es(es: Elasticsearch, index_name: str) -> int:
             fail_count += 1
             if fail_count <= 5:
                 logger.warning("Failed to index doc: %s", item)
-
     logger.info("Laws ES import complete: %d succeeded, %d failed", success_count, fail_count)
     return success_count
-
 
 def finalize_es_index(es: Elasticsearch, index_name: str):
     """Restore production settings, refresh, and force-merge after bulk import."""
     logger.info("Finalizing ES index %s: restoring refresh_interval and replicas", index_name)
-    es.indices.put_settings(
+    es.options(request_timeout=120).indices.put_settings(
         index=index_name,
         body={
             "index": {
@@ -376,38 +331,29 @@ def finalize_es_index(es: Elasticsearch, index_name: str):
             }
         },
     )
-
     logger.info("Refreshing ES index %s", index_name)
-    es.indices.refresh(index=index_name)
-
+    es.options(request_timeout=600).indices.refresh(index=index_name)
     logger.info("Force-merging ES index %s to 1 segment (this may take a while)", index_name)
     es.options(request_timeout=3600).indices.forcemerge(
         index=index_name, max_num_segments=1
     )
     logger.info("Finalized ES index %s", index_name)
 
-
 # ────────── Atomic Swap ───────────────────────────────────────────────────── #
-
-
 def swap_mongo_collection(db, live_name: str, new_name: str):
     """Atomically swap a new collection into the live name."""
     old_name = f"{live_name}-old"
-
     # Rename current to -old (if it exists)
     if live_name in db.list_collection_names():
         db[live_name].rename(old_name)
         logger.info("Renamed %s -> %s", live_name, old_name)
-
     # Rename new to live
     db[new_name].rename(live_name)
     logger.info("Renamed %s -> %s", new_name, live_name)
-
     # Drop old
     if old_name in db.list_collection_names():
         db.drop_collection(old_name)
         logger.info("Dropped %s", old_name)
-
 
 def swap_es_index(es: Elasticsearch, alias_name: str, new_index: str):
     """Atomically swap an ES alias to point to a new index."""
@@ -420,11 +366,9 @@ def swap_es_index(es: Elasticsearch, alias_name: str, new_index: str):
     except Exception:
         # Alias doesn't exist yet (first run)
         pass
-
     actions.append({"add": {"index": new_index, "alias": alias_name}})
     es.indices.update_aliases(body={"actions": actions})
     logger.info("Swapped ES alias %s -> %s", alias_name, new_index)
-
     # Delete old indices
     for action in actions:
         if "remove" in action:
@@ -435,12 +379,14 @@ def swap_es_index(es: Elasticsearch, alias_name: str, new_index: str):
             except Exception:
                 logger.warning("Failed to delete old ES index %s", old_idx)
 
-
 # ────────── Cleanup on Failure ────────────────────────────────────────────── #
-
-
 def cleanup_temps(db, es: Elasticsearch, temp_names: Dict[str, list]):
-    """Drop temporary collections and indices on failure."""
+    """Drop temporary collections and indices on failure.
+
+    Only operates on names still present in temp_names — the caller is
+    expected to remove names from this dict once they have been
+    successfully swapped into live, so they will not be cleaned up here.
+    """
     for name in temp_names.get("mongo", []):
         if name in db.list_collection_names():
             db.drop_collection(name)
@@ -453,72 +399,66 @@ def cleanup_temps(db, es: Elasticsearch, temp_names: Dict[str, list]):
         except Exception:
             pass
 
-
 # ────────── Main ──────────────────────────────────────────────────────────── #
-
-
 def main():
     start_time = time.time()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     logger.info("=" * 60)
     logger.info("Weekly update started at %s", datetime.now(timezone.utc).isoformat())
-
     # Step 1: Refresh GitHub caches
     logger.info("Step 1: Refreshing GitHub caches")
     refresh_github_caches()
-
     # Connect to databases
     mongo_client = MongoClient(MONGO_URL)
     db = mongo_client[MONGO_DB]
-    es = Elasticsearch(ES_URL)
-
+    es = Elasticsearch(ES_URL, request_timeout=ES_REQUEST_TIMEOUT)
     # Temp names
     cases_mongo_temp = "canadian-case-law-new"
     laws_mongo_temp = "canadian-laws-new"
     cases_es_temp = f"canadian-case-law-{timestamp}"
     laws_es_temp = f"canadian-laws-{timestamp}"
-
+    # Items in this dict will be deleted by cleanup_temps on failure.
+    # As soon as a temp resource is swapped into live, we MUST remove it
+    # from this dict so the cleanup handler doesn't destroy live data.
     temp_names = {
         "mongo": [cases_mongo_temp, laws_mongo_temp],
         "es": [cases_es_temp, laws_es_temp],
     }
-
     try:
         # Clean up any leftover temp collections from a previous failed run
         cleanup_temps(db, es, temp_names)
-
         # ── Cases: import, index, swap, then free old ──
         logger.info("Step 2: Importing cases to MongoDB")
         cases_mongo_count = import_cases_to_mongo(db, cases_mongo_temp)
-
         logger.info("Step 2b: Creating MongoDB indexes for cases")
         create_mongo_indexes(db, cases_mongo_temp)
-
         logger.info("Step 3: Importing cases to Elasticsearch")
         create_es_index(es, cases_es_temp)
         cases_es_count = import_cases_to_es(es, cases_es_temp)
         finalize_es_index(es, cases_es_temp)
-
         logger.info("Step 4: Swapping cases (mongo + ES)")
         swap_mongo_collection(db, "canadian-case-law", cases_mongo_temp)
         swap_es_index(es, "canadian-case-law", cases_es_temp)
-
+        # Cases are now live — remove from cleanup list so a later
+        # failure doesn't destroy the freshly-promoted live data.
+        temp_names["mongo"].remove(cases_mongo_temp)
+        temp_names["es"].remove(cases_es_temp)
         # ── Laws: import, index, swap, then free old ──
         logger.info("Step 5: Importing laws to MongoDB")
         laws_mongo_count = import_laws_to_mongo(db, laws_mongo_temp)
-
         logger.info("Step 5b: Creating MongoDB indexes for laws")
         create_mongo_indexes(db, laws_mongo_temp)
-
         logger.info("Step 6: Importing laws to Elasticsearch")
         create_es_index(es, laws_es_temp)
         laws_es_count = import_laws_to_es(es, laws_es_temp)
         finalize_es_index(es, laws_es_temp)
-
         logger.info("Step 7: Swapping laws (mongo + ES)")
         swap_mongo_collection(db, "canadian-laws", laws_mongo_temp)
         swap_es_index(es, "canadian-laws", laws_es_temp)
-
+        # Laws are now live — remove from cleanup list (same reasoning
+        # as cases above).
+        temp_names["mongo"].remove(laws_mongo_temp)
+        temp_names["es"].remove(laws_es_temp)
         elapsed = time.time() - start_time
         logger.info(
             "Weekly update completed successfully in %.0f seconds. "
@@ -526,16 +466,13 @@ def main():
             elapsed, cases_mongo_count, cases_es_count,
             laws_mongo_count, laws_es_count,
         )
-
     except Exception:
         logger.exception("Weekly update FAILED — retaining old data")
         cleanup_temps(db, es, temp_names)
         mongo_client.close()
         sys.exit(1)
-
     finally:
         mongo_client.close()
-
 
 if __name__ == "__main__":
     main()

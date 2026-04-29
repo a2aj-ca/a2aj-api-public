@@ -43,6 +43,15 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+### 5.5 Add Swap files (to help with memory issues)
+
+'''bash
+sudo fallocate -l 8G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+'''
+
 ### 6. Configure environment variables
 
 Copy the example file and fill in real values:
