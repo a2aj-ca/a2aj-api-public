@@ -1,0 +1,78 @@
+## Setup
+
+Tested on Ubuntu 24.04 (Noble) with Python 3.12. These instructions assume the project will live at `/home/ubuntu/a2aj-api-public/`.
+
+### 1. Install git (if not already installed)
+
+```bash
+sudo apt update
+sudo apt install git -y
+```
+
+### 2. Clone the repository
+
+```bash
+cd /home/ubuntu
+git clone https://github.com/a2aj-ca/a2aj-api-public.git
+cd /home/ubuntu/a2aj-api-public
+```
+
+### 3. Install the Python venv package
+
+Ubuntu's default Python install doesn't include `venv`. Install it:
+
+```bash
+sudo apt install python3.12-venv -y
+```
+
+### 4. Create and activate a virtual environment
+
+From `/home/ubuntu/a2aj-api-public/`:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Your prompt should now show a `(.venv)` prefix. To exit the venv later, run `deactivate`.
+
+### 5. Install dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 6. Configure environment variables
+
+Copy the example file and fill in real values:
+
+```bash
+cp /home/ubuntu/a2aj-api-public/.env.example /home/ubuntu/a2aj-api-public/.env
+# then edit /home/ubuntu/a2aj-api-public/.env with your actual credentials
+```
+
+### 7. Run the application
+
+From `/home/ubuntu/a2aj-api-public/` (with the venv activated):
+
+```bash
+# REST API
+python main_api.py
+
+# MCP server
+python main_mcp.py
+```
+
+## Returning to the project later
+
+Once the above is done, day-to-day you only need:
+
+```bash
+cd /home/ubuntu/a2aj-api-public
+source .venv/bin/activate
+# ... do work ...
+deactivate
+```
+
+You don't reinstall packages — they persist in `.venv/`. If `requirements.txt` changes (e.g., after a `git pull`), re-run `pip install -r requirements.txt` from `/home/ubuntu/a2aj-api-public/` with the venv activated.
