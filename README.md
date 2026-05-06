@@ -25,28 +25,69 @@ main_mcp.py (fastmcp standalone)
 
 ## Setup
 
+Tested on Ubuntu 24.04 (Noble) with Python 3.12. These instructions assume the project lives at `/home/ubuntu/a2aj-api-public/`.
+
 ### Prerequisites
 
-- Python 3.11+
-- MongoDB 8.0 (local, Docker recommended)
-- Elasticsearch 9.x (on a separate VM or the same host)
+- Python 3.11+ (tested on 3.12)
+- MongoDB 8.0 — we run it in Docker (see `a2aj_internal_instructions/` for the compose file and tuning notes)
+- Elasticsearch 9.x — usually on a separate VM, reachable from this host (see 'a2aj_internal_instructions/' for details about setting up elastic search)
 
-Both MongoDB and Elasticsearch must be running before starting the API or running the weekly update. See `a2aj_internal_instructions/` for how we set these up (Docker Compose configs, memory tuning, etc.).
-
-### Install
+### 1. Clone the repository
 
 ```bash
-python -m venv .venv
+sudo apt update && sudo apt install -y git
+cd /home/ubuntu
+git clone https://github.com/a2aj-ca/a2aj-api-public.git
+cd /home/ubuntu/a2aj-api-public
+```
+
+### 2. Install the Python venv package
+
+```bash
+sudo apt install -y python3.12-venv
+```
+
+### 3. Create the virtual environment and install dependencies
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Configure
+To exit the venv later, run `deactivate`.
 
-Copy `.env.example` to `.env` and fill in:
+### 4. Add a swap file
+
+The weekly update can spike memory while loading parquet shards. A swap file turns transient spikes into "slow but completes" instead of OOM kills.
+
+```bash
+sudo fallocate -l 8G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+Persist across reboots:
+
+```bash
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Lower swappiness so MongoDB's hot cache stays in RAM under normal conditions:
+
+```bash
+sudo sysctl vm.swappiness=10
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf
+```
+
+### 5. Configure environment variables
 
 ```bash
 cp .env.example .env
+# then edit .env
 ```
 
 | Variable | Description |
@@ -55,50 +96,177 @@ cp .env.example .env
 | `ELASTICSEARCH_URL` | Elasticsearch URL (e.g., `http://<hostname>:9200`) |
 | `HF_TOKEN` | HuggingFace token (optional, for private datasets) |
 
-### Initial Data Load
+### 6. Initial data load
 
-Run the weekly update script to populate MongoDB and Elasticsearch:
+Populate MongoDB and Elasticsearch from the HuggingFace datasets:
 
 ```bash
-python weekly_update.py
+.venv/bin/python weekly_update.py
 ```
 
 This will:
+
 1. Fetch coverage and boosting config from GitHub → `cache/`
-2. Download case law and laws datasets from HuggingFace
-3. Load into MongoDB collections with indexes
-4. Index into Elasticsearch with proper settings
-5. Perform atomic swap to make data live
+2. Stream the case-law and laws datasets from HuggingFace, writing to both MongoDB and Elasticsearch in a single pass (memory-bounded via pyarrow row-group iteration)
+3. Build MongoDB indexes
+4. Finalize Elasticsearch indices (refresh, force-merge)
+5. Atomically swap the new collections / aliases into the live `canadian-case-law` and `canadian-laws` names
 
-### Run the API
+### 7. Run as systemd services (auto-restart on reboot)
 
-```bash
-uvicorn main_api:app --host 0.0.0.0 --port 8000
-```
+This repo runs as two services: the FastAPI app (`uvicorn`) and the standalone MCP server (`mcp-server`). 
 
-### Run the standalone MCP server
+#### 7a. API service
 
 ```bash
-python main_mcp.py --port 8001
+sudo nano /etc/systemd/system/uvicorn.service
 ```
 
-## Weekly Update
+```ini
+[Unit]
+Description=Uvicorn daemon for A2AJ Canadian Legal Data API
+After=network.target
 
-The weekly update pulls fresh data from HuggingFace and refreshes all caches. It uses atomic swaps (MongoDB collection rename + Elasticsearch alias swap) to avoid downtime.
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/a2aj-api-public
+Environment="PATH=/home/ubuntu/a2aj-api-public/.venv/bin"
+ExecStart=/home/ubuntu/a2aj-api-public/.venv/bin/uvicorn main_api:app --host localhost --port 8000
+Restart=always
+RestartSec=3
 
-### Cron setup
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 7b. Standalone MCP service
+
+```bash
+sudo nano /etc/systemd/system/mcp-server.service
+```
+
+```ini
+[Unit]
+Description=FastMCP daemon for Canadian Legal Data MCP Server
+After=network.target uvicorn.service
+Requires=uvicorn.service
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/a2aj-api-public
+Environment="PATH=/home/ubuntu/a2aj-api-public/.venv/bin"
+ExecStart=/home/ubuntu/a2aj-api-public/.venv/bin/python main_mcp.py --port 8001
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### 7c. Enable and start
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now uvicorn mcp-server
+sudo systemctl status uvicorn mcp-server
+```
+
+> If you set up the project as `root` and only later switched to running services as `ubuntu`, fix file ownership first:
+> ```bash
+> sudo chown -R ubuntu:ubuntu /home/ubuntu/a2aj-api-public
+> ```
+
+
+### 8. Schedule the weekly update
 
 ```bash
 crontab -e
-# Add:
-0 15 * * 0  cd /home/sr/a2aj-api-public && .venv/bin/python weekly_update.py >> logs/weekly_update.log 2>&1
 ```
 
-Runs every Sunday at 3 PM. Logs to `logs/weekly_update.log`.
+Add:
 
-### Failure handling
+```
+0 15 * * 0  cd /home/ubuntu/a2aj-api-public && .venv/bin/python weekly_update.py >> logs/weekly_update.log 2>&1 && sudo systemctl restart uvicorn
+```
 
-If any step fails, the old data remains live and queryable. Temporary collections/indices are cleaned up automatically. Check `logs/weekly_update.log` for details.
+Runs every Sunday at 15:00 UTC. Logs append to `logs/weekly_update.log`.
+
+> NOTE: restart will require passwordless sudo for ubuntu user:
+>```bash
+>ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart uvicorn, /usr/bin/systemctl restart mcp-server
+>```
+
+## Day-to-day operations
+
+### Returning to the project
+
+```bash
+cd /home/ubuntu/a2aj-api-public
+source .venv/bin/activate
+# ... do work ...
+deactivate
+```
+
+`.venv/` is persistent — you don't reinstall packages. After a `git pull` that changes `requirements.txt`, re-run `pip install -r requirements.txt`.
+
+### Restart after code changes
+
+```bash
+sudo systemctl restart uvicorn      # after main_api.py changes
+sudo systemctl restart mcp-server   # after main_mcp.py changes
+```
+
+### View logs
+
+```bash
+journalctl -u uvicorn.service -n 100 -f
+journalctl -u mcp-server.service -n 100 -f
+tail -f logs/weekly_update.log
+tail -f logs/api.log
+```
+
+### Inspect Elasticsearch state
+
+```bash
+export ES_URL="http://<your-es-host>:9200"
+
+# All indices and which alias they're behind
+curl -s "$ES_URL/_cat/indices/canadian-*?v&s=index"
+curl -s "$ES_URL/_cat/aliases/canadian-*?v"
+
+# Find orphan indices (not pointed to by any alias)
+comm -23 \
+  <(curl -s "$ES_URL/_cat/indices/canadian-*?h=index" | sort) \
+  <(curl -s "$ES_URL/_cat/aliases/canadian-*?h=index" | sort)
+
+# Delete an orphan
+curl -X DELETE "$ES_URL/canadian-case-law-YYYYMMDD"
+```
+
+### Inspect MongoDB state
+
+```bash
+docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
+  db.getCollectionInfos().forEach(c => {
+    const s = db.getCollection(c.name).stats();
+    print(c.name.padEnd(30), String(s.count).padStart(10), (s.size/1024/1024).toFixed(1) + " MB");
+  })
+'
+```
+
+Expected collections: `canadian-case-law`, `canadian-laws`, `fs.files`, `fs.chunks` (GridFS internals for laws >5 MB). Anything with `-new` or `-old` in the name is an orphan from a failed run and can be safely dropped:
+
+```bash
+docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
+  db.getCollection("canadian-case-law-new").drop()
+'
+```
+
+## Weekly Update — failure handling
+
+The weekly update uses atomic swaps (MongoDB collection rename + Elasticsearch alias swap) to avoid downtime. If any step fails, the old data remains live and queryable, and temporary collections/indices are cleaned up automatically. Check `logs/weekly_update.log` for details.
 
 ## API Endpoints
 

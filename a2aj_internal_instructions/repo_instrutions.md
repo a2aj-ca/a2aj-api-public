@@ -45,12 +45,28 @@ pip install -r requirements.txt
 
 ### 5.5 Add Swap files (to help with memory issues)
 
-'''bash
+Create an 8 GB swap file and enable it:
+
+```bash
 sudo fallocate -l 8G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
-'''
+```
+
+Persist across reboots by adding to `/etc/fstab`:
+
+```bash
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Lower swappiness so the kernel only swaps under real pressure (keeps MongoDB's hot cache in RAM):
+
+```bash
+sudo sysctl vm.swappiness=10
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf
+```
+
 
 ### 6. Configure environment variables
 
