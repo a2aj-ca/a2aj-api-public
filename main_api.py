@@ -133,7 +133,7 @@ app = FastAPI(
 Search and retrieve Canadian **case law** *and* **legislation/regulations**
 by citation, title/name, or full text.
 
-**Advanced search (English ✦ French) supported on the text & name endpoints:**
+**Advanced search (English ✦ French) supported:**
 
 - Boolean operators ( `AND/OR/NOT` or `ET/OU/NON` )
 - Phrases in quotes
@@ -148,7 +148,7 @@ unless you explicitly sort by **newest** or **oldest**.
 **Rate limits:** 1,000 requests/hour and 5,000 requests/day per IP.
 For bulk access, see https://a2aj.ca/data/
 """,
-    version="0.2.0",
+    version="0.3.0",
     contact={"name": "Access to Algorithmic Justice", "email": "a2aj@yorku.ca"},
     lifespan=lifespan,
 )
