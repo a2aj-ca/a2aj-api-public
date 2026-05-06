@@ -264,6 +264,12 @@ docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
 '
 ```
 
+## Exposing the API publicly
+
+By default the API listens on `localhost:8000` and the standalone MCP server on `localhost:8001` — neither is reachable from outside the VM. To make them public you need a reverse proxy or tunnel that handles HTTPS termination and forwards to the local port. Common options include nginx with Let's Encrypt, Caddy, traefik, or Cloudflare Tunnel. Any of them work; just point them at `127.0.0.1:8000` for the API and, optionally, `127.0.0.1:8001` for the standalone MCP server.
+
+A2AJ uses Cloudflare Tunnel because it doesn't require opening any inbound ports on the VM and handles TLS automatically. Setup instructions are in [`a2aj_internal_instructions/cloudflare_instructions.md`](a2aj_internal_instructions/cloudflare_instructions.md). Note that the API also exposes an embedded MCP route at `/mcp`, served by the same uvicorn process, so a single public hostname pointing at port 8000 covers both REST and MCP without needing to expose the standalone server separately.
+
 ## Weekly Update — failure handling
 
 The weekly update uses atomic swaps (MongoDB collection rename + Elasticsearch alias swap) to avoid downtime. If any step fails, the old data remains live and queryable, and temporary collections/indices are cleaned up automatically. Check `logs/weekly_update.log` for details.
