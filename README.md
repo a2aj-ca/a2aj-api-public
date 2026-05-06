@@ -2,7 +2,7 @@
 
 API and MCP server for searching and retrieving Canadian case law and legislation. Maintained by [Sean Rehaag](https://www.osgoode.yorku.ca/faculty-and-staff/rehaag-sean/) as part of [A2AJ](https://a2aj.ca) (Access to Algorithmic Justice).
 
-A2AJ hosts a public instance of this API at [api.a2aj.ca/docs](https://api.a2aj.ca/docs) on infrastructure provided by the Digital Research Alliance of Canada. This repository is provided so that individuals and organizations who prefer to host their own infrastructure — for data privacy or other reasons — can do so.
+A2AJ hosts a public instance of this API at [api.a2aj.ca/docs](https://api.a2aj.ca/docs) and [mcp.a2aj.ca/mcp](https://mcp.a2aj.ca/mcp) on infrastructure provided by the Digital Research Alliance of Canada. This repository is provided so that individuals and organizations who prefer to host their own infrastructure — for data privacy or other reasons — can do so.
 
 ## Architecture
 
@@ -248,7 +248,7 @@ curl -X DELETE "$ES_URL/canadian-case-law-YYYYMMDD"
 ### Inspect MongoDB state
 
 ```bash
-docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
+docker exec < mongodb-container-name > mongosh a2aj-api --quiet --eval '
   db.getCollectionInfos().forEach(c => {
     const s = db.getCollection(c.name).stats();
     print(c.name.padEnd(30), String(s.count).padStart(10), (s.size/1024/1024).toFixed(1) + " MB");
@@ -259,7 +259,7 @@ docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
 Expected collections: `canadian-case-law`, `canadian-laws`, `fs.files`, `fs.chunks` (GridFS internals for laws >5 MB). Anything with `-new` or `-old` in the name is an orphan from a failed run and can be safely dropped:
 
 ```bash
-docker exec sr-mongodb mongosh a2aj-api --quiet --eval '
+docker exec < mongodb-container-name > mongosh a2aj-api --quiet --eval '
   db.getCollection("canadian-case-law-new").drop()
 '
 ```
