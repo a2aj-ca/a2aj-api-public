@@ -2,6 +2,8 @@
 
 Tested on Ubuntu 24.04 (Noble) with Python 3.12. These instructions assume the project will live at `/home/ubuntu/a2aj-api-public/`.
 
+NOTE: If on Digital Research Alliance infrastucture, best to do everything while logged in as ubuntu rather than root to avoid permission issues (sudo if necessary)
+
 ### 1. Install git (if not already installed)
 
 ```bash
