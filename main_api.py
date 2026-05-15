@@ -65,6 +65,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
+# Quiet down noisy third-party loggers
+logging.getLogger("elastic_transport.transport").setLevel(logging.WARNING)
+logging.getLogger("elasticsearch").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # in case the MCP side logs to the same file
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 # ----------------------------- CACHE ----------------------------------------
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)

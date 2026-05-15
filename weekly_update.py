@@ -70,10 +70,7 @@ LOG_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format=">>> %(levelname)s | %(asctime)s | %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(LOG_DIR / "weekly_update.log", mode="a"),
-    ],
+    handlers=[logging.FileHandler(LOG_DIR / "weekly_update.log", mode="a")],
 )
 # Quiet down chatty third-party loggers — they produce one INFO line
 # per HTTP request, which means thousands per run.
