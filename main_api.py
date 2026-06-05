@@ -74,12 +74,14 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/a2aj-ca/canadian-legal-data/main/UTILS"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/a2aj-ca/canadian-legal-data/1895a7a024fada98a13d79752e1f44818ce0b59b/UTILS"
 GITHUB_FILES = {
     "case_coverage.json": f"{GITHUB_RAW_BASE}/case_coverage.json",
     "laws_coverage.json": f"{GITHUB_RAW_BASE}/laws_coverage.json",
     "search_boosting.json": f"{GITHUB_RAW_BASE}/search_boosting.json",
 }
+
+CUSTOM_URL = "https://bench-06-26-api.a2aj.ca"  # For OpenAPI server field (overrides GITHUB_FILES if set)
 
 # In-memory caches (populated on startup)
 _coverage_cache: Dict[str, List[Dict[str, Any]]] = {}
@@ -334,7 +336,7 @@ def custom_openapi():
         title=app.title, version=app.version,
         description=app.description, routes=app.routes, contact=app.contact,
     )
-    schema["servers"] = [{"url": "https://api.a2aj.ca"}]
+    schema["servers"] = [{"url": CUSTOM_URL}]
     app.openapi_schema = schema
     return schema
 
