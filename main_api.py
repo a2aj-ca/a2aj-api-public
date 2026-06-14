@@ -74,7 +74,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/a2aj-ca/canadian-legal-data/1895a7a024fada98a13d79752e1f44818ce0b59b/UTILS"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/a2aj-ca/canadian-legal-data/264ccbc7f3ca8ee8603fe48faba00a074c141f11/UTILS"
 GITHUB_FILES = {
     "case_coverage.json": f"{GITHUB_RAW_BASE}/case_coverage.json",
     "laws_coverage.json": f"{GITHUB_RAW_BASE}/laws_coverage.json",
