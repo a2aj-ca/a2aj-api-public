@@ -364,8 +364,20 @@ def build_filters(dataset: str, start_date: Optional[date], end_date: Optional[d
 
 def build_function_score_cases():
     boosts = _boosting_cache.get("cases", {})
-    fns = [{"filter": {"term": {"dataset.keyword": k}}, "weight": v} for k, v in boosts.items()]
+    # Compress tribunal weights so they nudge rather than override relevance.
+    fns = [
+        {"filter": {"term": {"dataset.keyword": k}}, "weight": 1 + 0.15 * math.log(v)}
+        for k, v in boosts.items()
+    ]
     fns.append({"gauss": {"document_date_en": {"origin": "now", "scale": "7000d", "decay": 0.5}}, "weight": 1})
+    fns.append({
+        "script_score": {
+            "script": {
+                "source": "1 + 0.1 * Math.log(1 + (doc['citing_cases_count'].size() == 0 ? 0 : doc['citing_cases_count'].value))"
+            }
+        },
+        "weight": 1,
+    })
     return fns
 
 def build_function_score_laws():
@@ -590,6 +602,9 @@ def fetch(
         for k in list(filtered):
             if k.startswith("unofficial_sections_") or k.startswith("num_sections_") or k.endswith("_file_id"):
                 filtered.pop(k, None)
+        
+    for k in ("cases_citing_en", "cases_citing_fr", "cases_cited_en", "cases_cited_fr"):
+        filtered.pop(k, None)
 
     return {"results": [filtered]}
 
