@@ -589,6 +589,9 @@ def fetch(
             if k.startswith("unofficial_sections_") or k.startswith("num_sections_") or k.endswith("_file_id"):
                 filtered.pop(k, None)
 
+    for k in ("cases_citing_en", "cases_citing_fr", "cases_cited_en", "cases_cited_fr"):
+        filtered.pop(k, None)
+        
     return {"results": [filtered]}
 
 # ---------------------------------------------------------------------------
