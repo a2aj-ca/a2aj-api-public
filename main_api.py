@@ -520,13 +520,17 @@ def fetch(
     ),
 ):
     if doc_type == "cases":
-        sanitized = _normalize_citation(citation).upper()
-        doc = collection_cases.find_one({
-            "$or": [
-                {"citation_en": sanitized},
-                {"citation_fr": sanitized},
-            ]
-        })
+        sanitized = _normalize_citation(citation)
+        strength2 = Collation(locale="en", strength=2, alternate="shifted")
+        doc = collection_cases.find_one(
+            {
+                "$or": [
+                    {"citation_en": sanitized},
+                    {"citation_fr": sanitized},
+                ]
+            },
+            collation=strength2,
+        )
 
         if not doc:
             return JSONResponse(content={}, status_code=200)

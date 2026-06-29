@@ -26,6 +26,7 @@ from elasticsearch import Elasticsearch, helpers
 from gridfs import GridFS
 from huggingface_hub import HfFileSystem
 from pymongo import ASCENDING, MongoClient
+from pymongo.collation import Collation
 
 load_dotenv()
 
@@ -64,6 +65,9 @@ GRIDFS_THRESHOLD = 5_000_000
 
 # Mongo batch size for inserts
 MONGO_BATCH_SIZE = 1000
+
+# Mongo collation for case/law citations (ignore punctuation, diacritics, case)
+CITATION_COLLATION = Collation(locale="en", strength=2, alternate="shifted")
 
 # ────────── Logging ───────────────────────────────────────────────────────── #
 LOG_DIR.mkdir(exist_ok=True)
@@ -173,8 +177,8 @@ def refresh_github_caches() -> bool:
 # ────────── Mongo: indexes ──────────────────────────────────────────────── #
 def create_mongo_indexes(db, collection_name: str):
     collection = db[collection_name]
-    collection.create_index([("citation_en", ASCENDING)])
-    collection.create_index([("citation_fr", ASCENDING)])
+    collection.create_index([("citation_en", ASCENDING)], collation=CITATION_COLLATION)
+    collection.create_index([("citation_fr", ASCENDING)], collation=CITATION_COLLATION)
     collection.create_index([("dataset", ASCENDING)])
     collection.create_index([("document_date_en", ASCENDING)])
     collection.create_index([("document_date_fr", ASCENDING)])
