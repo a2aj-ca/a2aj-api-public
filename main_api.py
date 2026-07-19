@@ -115,17 +115,17 @@ app = FastAPI(
     description="""
 Search and retrieve Canadian **case law** *and* **legislation/regulations**
 by citation, title/name, or full text.
-**Advanced search (English ✦ French) supported:**
+**Advanced search (English ✦ French):**
 - Boolean operators ( `AND/OR/NOT` or `ET/OU/NON` )
 - Phrases in quotes
 - Grouping with parentheses
 - Wildcards ( `*` suffix )
 - Proximity ( `NEAR/n` or `"words"~n` or `/n` )
 - French `EXACT( )` override
-Dataset boosting is applied automatically (e.g. SCC decisions, statutes),
-unless you explicitly sort by **newest** or **oldest**.
+Dataset boosting applied (e.g. SCC decisions, statutes),
+unless explicitly sorted by **newest** or **oldest**.
 **Rate limits:** 1,000 requests/hour and 5,000 requests/day per IP.
-For bulk access, see https://a2aj.ca/data/
+**Systematic scraping prohibited:** For bulk access, see https://a2aj.ca/data/
 """,
     version="0.3.0",
     contact={"name": "Access to Algorithmic Justice", "email": "a2aj@yorku.ca"},
@@ -142,7 +142,8 @@ app.add_middleware(
 RATE_LIMIT_HOURLY = 1000
 RATE_LIMIT_DAILY = 5000
 RATE_LIMIT_MESSAGE = (
-    "Rate limit exceeded. If you need bulk access to Canadian legal data, "
+    "Rate limit exceeded. Systematic scraping is prohibited on API. "
+    "If you need bulk access to Canadian legal data, "
     "please use our bulk download (https://a2aj.ca/data/). "
     "If you are not scraping and require higher rate limits, "
     "contact us at a2aj@yorku.ca."
