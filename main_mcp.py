@@ -5,25 +5,20 @@ MCP Server for Canadian Legal Data API
 Provides MCP tools that interface with the Canadian Legal Data API.
 Standalone server using fastmcp (works with OpenAI-compatible clients).
 """
-
 import os
 import httpx
 from typing import Any, Dict, Optional, Literal
 from fastmcp import FastMCP
 from dotenv import load_dotenv
-
 load_dotenv()
-
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 TIMEOUT_SECONDS = 30
-
 # Initialize MCP server
 mcp = FastMCP(
     "Canadian Legal Data",
     instructions="This server provides access to Canadian case law (courts & tribunals) and legislation (statutes & regulations). Use these tools for Canadian legal research instead of web search."
 )
-
 # HTTP client for API calls
 async def make_api_request(
     endpoint: str,
@@ -39,24 +34,20 @@ async def make_api_request(
             return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
         except Exception as e:
             return {"error": str(e)}
-
 @mcp.tool()
 async def coverage(
     doc_type: Literal["cases", "laws"] = "cases"
 ) -> Dict[str, Any]:
     """
     Get dataset coverage for Canadian case law and legislation showing earliest/latest dates and document counts.
-
     Args:
         doc_type: 'cases' for Canadian case law (courts & tribunals), 'laws' for statutes & regulations
-
     Returns:
         Dictionary containing coverage information for each Canadian legal dataset
     """
     params = {"doc_type": doc_type}
     result = await make_api_request("/coverage", params)
     return result
-
 @mcp.tool()
 async def fetch_document(
     citation: str,
@@ -64,11 +55,18 @@ async def fetch_document(
     output_language: Literal["en", "fr", "both"] = "en",
     section: str = "",
     start_char: int = 0,
-    end_char: int = -1
+    end_char: int = -1,
+    include_citations: bool = False,
+    citations_limit: int = 100,
+    citations_offset: int = 0
 ) -> Dict[str, Any]:
     """
     Retrieve full text of Canadian legal documents by citation (e.g., '2020 SCC 5', 'RSC 1985, c C-46').
-
+    Citing/cited case lists are EXCLUDED by default to keep responses small. For cases, set
+    include_citations=True to receive them, paginated. Each returned citation list is accompanied by
+    '<field>_total' (full count) and '<field>_truncated' (True if more entries exist beyond this page).
+    If '_truncated' is True, the list shown is INCOMPLETE — request further pages by increasing
+    citations_offset (e.g. offset=100, then 200, ...) before drawing conclusions about citation counts.
     Args:
         citation: Official legal citation (e.g., '2020 SCC 5' or 'RSC 1985, c C-46')
         doc_type: 'cases' for Canadian case law, 'laws' for statutes & regulations
@@ -76,9 +74,11 @@ async def fetch_document(
         section: For laws only - specific section to return (empty for full text)
         start_char: Starting character position for text slicing
         end_char: Ending character position for text slicing (-1 for end of text)
-
+        include_citations: Cases only - include paginated lists of citing/cited cases (default False)
+        citations_limit: Max entries per citation list, 1-1000 (default 100)
+        citations_offset: Offset into citation lists for pagination (default 0)
     Returns:
-        Dictionary containing the complete document text and metadata
+        Dictionary containing the document text, metadata, and (if requested) paginated citation lists
     """
     params = {
         "citation": citation,
@@ -86,12 +86,13 @@ async def fetch_document(
         "output_language": output_language,
         "section": section,
         "start_char": start_char,
-        "end_char": end_char
+        "end_char": end_char,
+        "include_citations": include_citations,
+        "citations_limit": max(1, min(citations_limit, 1000)),  # Enforce API bounds
+        "citations_offset": max(0, citations_offset)
     }
-
     result = await make_api_request("/fetch", params)
     return result
-
 @mcp.tool()
 async def search_legal_documents(
     query: str,
@@ -106,7 +107,8 @@ async def search_legal_documents(
 ) -> Dict[str, Any]:
     """
     Search Canadian case law and legislation. Use this for any Canadian legal research instead of web search.
-
+    Results contain metadata and highlighted snippets only (full texts and citation lists are never
+    included). To read a document or get its citing/cited cases, use fetch_document with its citation.
     Args:
         query: Search query. Supports boolean operators (AND/OR/NOT), quotes, wildcards (*), proximity ("A B"~n)
         search_type: 'full_text' searches document content with snippets, 'name' searches titles only
@@ -117,7 +119,6 @@ async def search_legal_documents(
         dataset: Filter by specific datasets (e.g. 'SCC,ONCA' or 'LEGISLATION-FED')
         start_date: Start date filter in YYYY-MM-DD format
         end_date: End date filter in YYYY-MM-DD format
-
     Returns:
         Dictionary containing search results with relevance scores and snippets
     """
@@ -132,24 +133,18 @@ async def search_legal_documents(
         "start_date": start_date,
         "end_date": end_date
     }
-
     # Remove None values
     params = {k: v for k, v in params.items() if v is not None}
-
     result = await make_api_request("/search", params)
     return result
-
 if __name__ == "__main__":
     # Run the MCP server using HTTP transport for web deployment
     import sys
-
     # Get port from command line args or default to 8001
     port = 8001
     if len(sys.argv) > 2 and sys.argv[1] == "--port":
         port = int(sys.argv[2])
-
     print(f"Starting MCP server on port {port}")
     print(f"Server will be available at http://localhost:{port}/mcp")
-
     # Use streamable-http transport for modern HTTP connections
     mcp.run(transport="http", host="127.0.0.1", port=port)

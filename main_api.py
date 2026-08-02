@@ -127,7 +127,7 @@ unless explicitly sorted by **newest** or **oldest**.
 **Rate limits:** 1,000 requests/hour and 5,000 requests/day per IP.
 **Systematic scraping prohibited:** For bulk access, see https://a2aj.ca/data/
 """,
-    version="0.3.0",
+    version="0.4.0",
     contact={"name": "Access to Algorithmic Justice", "email": "a2aj@yorku.ca"},
     lifespan=lifespan,
 )
@@ -188,7 +188,8 @@ ALLOWED_PARAMS: Dict[str, set] = {
     "/search": {"query", "search_type", "doc_type", "size", "search_language",
                 "sort_results", "dataset", "start_date", "end_date"},
     "/fetch": {"citation", "doc_type", "output_language", "section",
-               "start_char", "end_char"},
+               "start_char", "end_char",
+               "include_citations", "citations_limit", "citations_offset"},
     "/coverage": {"doc_type"},
 }
 class UnknownParamsMiddleware:
@@ -217,7 +218,6 @@ class UnknownParamsMiddleware:
         return await self.app(scope, receive, send)
 class RateLimitMiddleware:
     """Rate limit external traffic per IP; internal (MCP) calls pass free.
-
     External requests arrive via the Cloudflare tunnel and carry a
     CF-Connecting-IP header set authoritatively at the edge (not spoofable,
     since :8000 is only reachable via loopback + the tunnel). Requests from
@@ -360,6 +360,25 @@ def hydrate_large_field(doc: dict, base: str):
         except Exception:
             logging.exception("Failed GridFS fetch for %s", doc.get("_id"))
     doc.pop(fid_key, None)
+# ---- Citation list truncation helper (cases only) -------------------------
+CITATION_LIST_KEYS = ("cases_citing_en", "cases_citing_fr", "cases_cited_en", "cases_cited_fr")
+def apply_citation_policy(filtered: Dict[str, Any], include: bool, limit: int, offset: int):
+    """Remove or paginate the citing/cited case lists on a fetched case.
+
+    When include is False (default), the lists are stripped entirely.
+    When include is True, each list is sliced to [offset : offset+limit] and
+    accompanied by `<key>_total` and `<key>_truncated` fields so callers
+    (especially LLM agents) know the list was cut and can paginate.
+    """
+    for k in CITATION_LIST_KEYS:
+        full = filtered.get(k)
+        if not include or full is None:
+            filtered.pop(k, None)
+            continue
+        total = len(full)
+        filtered[k] = full[offset: offset + limit]
+        filtered[f"{k}_total"] = total
+        filtered[f"{k}_truncated"] = offset + limit < total
 # --------------------------- END HELPER FUNCTIONS ---------------------------
 # ---------------------------------------------------------------------------
 # ENDPOINTS
@@ -410,7 +429,9 @@ def coverage(
 @app.get(
     "/fetch",
     summary="Get full text of case or law by citation",
-    description="""Fetch a case or a law/regulation by citation. For cases, returns full text or a character slice. For laws, returns full text, a slice, or a single section (if provided). The section parameter is ignored for cases.""",
+    description="""Fetch a case or a law/regulation by citation. For cases, returns full text or a character slice. For laws, returns full text, a slice, or a single section (if provided). The section parameter is ignored for cases.
+
+Citing/cited case lists are excluded by default. For cases, set include_citations=true to receive them, paginated via citations_limit and citations_offset. Each returned list comes with `<field>_total` (full count) and `<field>_truncated` (whether more entries exist beyond this page); request further pages by increasing citations_offset.""",
     operation_id="fetch",
     response_model=FetchResponse,
 )
@@ -442,6 +463,21 @@ def fetch(
         -1,
         description="End character index for text chunking (-1 means end of text, ignored if section is specified)",
         example=1000,
+    ),
+    include_citations: bool = Query(
+        False,
+        description="Cases only: include lists of citing/cited cases (paginated). Default false.",
+    ),
+    citations_limit: int = Query(
+        100,
+        ge=1,
+        le=1000,
+        description="Max entries returned per citation list (cases only, default 100, max 1000)",
+    ),
+    citations_offset: int = Query(
+        0,
+        ge=0,
+        description="Offset into citation lists for pagination (cases only)",
     ),
 ):
     if doc_type == "cases":
@@ -519,8 +555,14 @@ def fetch(
         for k in list(filtered):
             if k.startswith("unofficial_sections_") or k.startswith("num_sections_") or k.endswith("_file_id"):
                 filtered.pop(k, None)
-    for k in ("cases_citing_en", "cases_citing_fr", "cases_cited_en", "cases_cited_fr"):
-        filtered.pop(k, None)
+    # Citation lists: stripped by default; opt-in + paginated for cases.
+    # (Laws never carry these fields, so this is a no-op for doc_type == "laws".)
+    apply_citation_policy(
+        filtered,
+        include=(include_citations and doc_type == "cases"),
+        limit=citations_limit,
+        offset=citations_offset,
+    )
     return {"results": [filtered]}
 # ---------------------------------------------------------------------------
 # UNIFIED SEARCH
@@ -528,7 +570,7 @@ def fetch(
 @app.get(
     "/search",
     summary="Search cases or laws by full text or document name (English or French)",
-    description="""Search cases or laws/regulations by full text or by title. Use search_type=full_text for content (with highlighted snippets) or search_type=name for titles only. Supports AND/OR/NOT, quotes, parentheses, wildcards (*), and proximity ("A B"~n or A NEAR/n B).""",
+    description="""Search cases or laws/regulations by full text or by title. Use search_type=full_text for content (with highlighted snippets) or search_type=name for titles only. Supports AND/OR/NOT, quotes, parentheses, wildcards (*), and proximity ("A B"~n or A NEAR/n B). Results contain metadata and snippets only; use fetch (with include_citations for citation lists) to retrieve a specific document.""",
     operation_id="search",
     response_model=SearchResponse,
 )
@@ -614,42 +656,41 @@ def search(
         bool_query["filter"] = filters
     index_name = "canadian-case-law" if doc_type == "cases" else "canadian-laws"
     score_function = build_function_score_cases() if doc_type == "cases" else build_function_score_laws()
+    # Common body parts: never return the heavy fields from ES at all.
+    # citing_cases_count (an int) is intentionally kept — only the raw
+    # citing/cited case *lists* and full texts are excluded at the source.
+    body: Dict[str, Any] = {
+        "size": size,
+        "_source": {
+            "excludes": [
+                "unofficial_text_*",
+                "unofficial_sections_*",
+                "cases_citing_*",
+                "cases_cited_*",
+            ]
+        },
+    }
     if sort_results == "default":
-        body: Dict[str, Any] = {
-            "query": {
-                "function_score": {
-                    "query": {"bool": bool_query},
-                    "functions": score_function,
-                    "score_mode": "multiply",
-                    "boost_mode": "multiply",
-                }
-            },
-            "size": size,
-        }
-        if search_type == "full_text":
-            body["highlight"] = {
-                "fields": {
-                    search_field: {
-                        "fragment_size": 200,
-                        "number_of_fragments": 1,
-                    }
-                }
+        body["query"] = {
+            "function_score": {
+                "query": {"bool": bool_query},
+                "functions": score_function,
+                "score_mode": "multiply",
+                "boost_mode": "multiply",
             }
+        }
     else:
-        body = {
-            "query": {"bool": bool_query},
-            "size": size,
-            "sort": [{date_field: {"order": "desc" if sort_results == "newest_first" else "asc"}}],
-        }
-        if search_type == "full_text":
-            body["highlight"] = {
-                "fields": {
-                    search_field: {
-                        "fragment_size": 200,
-                        "number_of_fragments": 1,
-                    }
+        body["query"] = {"bool": bool_query}
+        body["sort"] = [{date_field: {"order": "desc" if sort_results == "newest_first" else "asc"}}]
+    if search_type == "full_text":
+        body["highlight"] = {
+            "fields": {
+                search_field: {
+                    "fragment_size": 200,
+                    "number_of_fragments": 1,
                 }
             }
+        }
     try:
         res = es.search(index=index_name, body=body)
     except BadRequestError as exc:
@@ -659,13 +700,7 @@ def search(
     results = []
     for hit in res["hits"]["hits"]:
         source = hit["_source"].copy()
-        if doc_type == "cases":
-            for field in ("_id", "unofficial_text_en", "unofficial_text_fr"):
-                source.pop(field, None)
-        else:
-            for field in ("_id", "unofficial_text_en", "unofficial_text_fr",
-                          "unofficial_sections_en", "unofficial_sections_fr"):
-                source.pop(field, None)
+        source.pop("_id", None)  # heavy fields already excluded at the ES level
         result_item = {
             **source,
             "score": hit["_score"],
