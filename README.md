@@ -160,6 +160,10 @@ Environment="PATH=/home/ubuntu/a2aj-api-public/.venv/bin"
 ExecStart=/home/ubuntu/a2aj-api-public/.venv/bin/python main_mcp.py --port 8001
 Restart=always
 RestartSec=3
+# Safety net: if memory grows unexpectedly (e.g., a client stuck in a
+# reconnect loop), restart cleanly instead of swapping.
+MemoryMax=2G
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target
